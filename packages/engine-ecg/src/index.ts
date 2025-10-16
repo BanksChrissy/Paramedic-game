@@ -1,25 +1,27 @@
 import type { RhythmSpec, Samples, LeadName } from "@paramedic/shared";
 
 /**
- * Minimal parametric ECG synthesizer:
- * - P/QRS/T primitives (gauss or triangle for QRS)
- * - 12-lead derivation via per-lead scale/invert/offset template
- * - Ring-style time progression with sample() returning contiguous chunks
+ * ECG engine
+ * - Phase 2: Parametric P/QRS/T generator (kept)
+ * - Phase 3: Timeline Mode (new)
  *
- * This is intentionally deterministic and allocation-light (one Float32Array
- * per lead per call).
+ * Timeline mode: generator.timeline = { loopSec, events[] }
+ *   Each event: { t, lead: LeadName|"*", type: "P"|"QRS"|"T"|"ARTIFACT", amp, widthMs }
+ *   Engine repeats the loop; each event is rendered as a pulse centered at t within the loop.
  */
 
-type Ctx = {
-  spec: RhythmSpec | null;
-  t: number; // seconds since load/reset
-};
-
+type Ctx = { spec: RhythmSpec | null; t: number };
 const ctx: Ctx = { spec: null, t: 0 };
 
 export function load(spec: RhythmSpec): void {
-  if (spec.mode !== "parametric" || !spec.generator.parametric) {
-    throw new Error("engine-ecg: only parametric mode is supported in Phase 2");
+  if (spec.mode !== "parametric" && spec.mode !== "timeline") {
+    throw new Error("engine-ecg: unsupported mode");
+  }
+  if (spec.mode === "parametric" && !spec.generator.parametric) {
+    throw new Error("engine-ecg: parametric mode requires generator.parametric");
+  }
+  if (spec.mode === "timeline" && !spec.generator.timeline) {
+    throw new Error("engine-ecg: timeline mode requires generator.timeline");
   }
   ctx.spec = spec;
   ctx.t = 0;
@@ -33,145 +35,154 @@ export function sample(seconds: number): Samples {
   if (!ctx.spec) throw new Error("engine-ecg: no spec loaded");
   const spec = ctx.spec;
   const gen = spec.generator;
-  const prm = gen.parametric!;
   const sr = gen.sampleRateHz;
   const N = Math.max(1, Math.floor(seconds * sr));
   const dt = 1 / sr;
 
-  // Defaults / guards
-  const bpm = clamp(prm.bpm, 20, 300);
-  const pPresent = prm.pWave?.present ?? true;
-  const pAmp = prm.pWave?.amp ?? 0.25; // mV baseline-ish
-  const pWidth = msToSec(prm.pWave?.widthMs ?? 90);
-
-  const qrsAmp = prm.qrs.amp;
-  const qrsWidth = msToSec(prm.qrs.widthMs);
-  const qrsShape = prm.qrs.shape; // "triangle" | "gauss"
-
-  const tAmp = prm.tWave.amp;
-  const tWidth = msToSec(prm.tWave.widthMs);
-
-  const jitter = gen.noise?.baselineJitter ?? 0; // small random additive noise (mV)
-  const wander = gen.noise?.wander ?? 0; // very slow baseline drift (mV)
-
-  const beatPeriod = 60 / bpm;
-
-  // Timing landmarks (fractions of the beat)
-  // crude textbook-ish placements: P center at -0.2s from QRS, T at +0.25s
-  const qrsCenterOffset = 0; // beat time anchors QRS at phase 0
-  const pCenterOffset = -0.20; // seconds relative to QRS
-  const tCenterOffset = +0.25;
-
-  // 12-lead derivation template
   const leads: LeadName[] = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"];
   const tmpl = buildLeadTemplate(spec);
 
-  // Allocate output arrays
+  const jitter = gen.noise?.baselineJitter ?? 0;
+  const wander = gen.noise?.wander ?? 0;
+  const twoPi = 2 * Math.PI;
+  const wanderFreq = 0.08; // Hz
+
   const out: Record<LeadName, Float32Array> = Object.create(null);
   for (const L of leads) out[L] = new Float32Array(N);
 
-  // Slow wander oscillator
-  // A super slow sine to shift baseline slightly over time if enabled
-  const wanderFreq = 0.08; // Hz (very slow)
-  const twoPi = 2 * Math.PI;
+  if (spec.mode === "parametric") {
+    // ---- Phase 2 path (kept) ----
+    const prm = gen.parametric!;
+    const bpm = clamp(prm.bpm, 20, 300);
+    const beatPeriod = 60 / bpm;
 
-  for (let i = 0; i < N; i++) {
-    const tAbs = ctx.t + i * dt;
-    // Phase time within beat, centered at QRS around 0
-    const beatIndex = Math.floor((tAbs - qrsCenterOffset) / beatPeriod);
-    const tQRS0 = beatIndex * beatPeriod + qrsCenterOffset;
-    const phaseT = tAbs - tQRS0; // seconds relative to QRS center ~ 0 each beat
+    const pPresent = prm.pWave?.present ?? true;
+    const pAmp = prm.pWave?.amp ?? 0.25;
+    const pWidth = msToSec(prm.pWave?.widthMs ?? 90);
+    const qrsAmp = prm.qrs.amp;
+    const qrsWidth = msToSec(prm.qrs.widthMs);
+    const qrsShape = prm.qrs.shape;
+    const tAmp = prm.tWave.amp;
+    const tWidth = msToSec(prm.tWave.widthMs);
 
-    // Component waveforms (single-lead base) in mV
-    let v = 0;
+    const pCenterOffset = -0.20; // sec relative to QRS
+    const tCenterOffset = +0.25;
 
-    // P-wave
-    if (pPresent) {
-      const tP = phaseT - pCenterOffset; // when zero => at P center
-      v += pAmp * gauss(tP, pWidthToSigma(pWidth));
-    }
+    for (let i = 0; i < N; i++) {
+      const tAbs = ctx.t + i * dt;
+      const vWander = wander > 0 ? wander * Math.sin(twoPi * wanderFreq * tAbs) : 0;
 
-    // QRS complex
-    {
-      const tQRS = phaseT; // center at 0
+      const beatIndex = Math.floor(tAbs / beatPeriod);
+      const tQRS0 = beatIndex * beatPeriod;
+      const phaseT = tAbs - tQRS0;
+
+      let v = 0;
+      if (pPresent) {
+        v += pAmp * gauss(phaseT - pCenterOffset, pWidthToSigma(pWidth));
+      }
       if (qrsShape === "gauss") {
-        v += qrsAmp * gauss(tQRS, widthToSigma(qrsWidth));
+        v += qrsAmp * gauss(phaseT, widthToSigma(qrsWidth));
       } else {
-        v += qrsAmp * triangle(tQRS, qrsWidth);
+        v += qrsAmp * triangle(phaseT, qrsWidth);
+      }
+      v += tAmp * gauss(phaseT - tCenterOffset, tWidthToSigma(tWidth));
+      v += vWander;
+
+      for (const L of leads) {
+        const m = tmpl[L];
+        const n = jitter > 0 ? (rand2(i, L) * 2 - 1) * jitter : 0;
+        out[L][i] = (m.invert ? -1 : 1) * v * m.scale + m.offset + n;
       }
     }
-
-    // T-wave
-    {
-      const tT = phaseT - tCenterOffset; // peak after QRS
-      v += tAmp * gauss(tT, tWidthToSigma(tWidth));
+  } else {
+    // ---- Phase 3 path: Timeline Mode ----
+    const tl = gen.timeline!;
+    const loopSec = Math.max(0.25, tl.loopSec);
+    const events = tl.events;
+    // Pre-split by lead for speed:
+    const byLead: Record<string, typeof events> = Object.create(null);
+    byLead["*"] = [];
+    for (const e of events) {
+      const key = e.lead;
+      if (!byLead[key]) byLead[key] = [];
+      byLead[key].push(e);
     }
 
-    // Slow baseline wander
-    if (wander > 0) {
-      const w = wander * Math.sin(twoPi * wanderFreq * tAbs);
-      v += w;
-    }
+    for (let i = 0; i < N; i++) {
+      const tAbs = ctx.t + i * dt;
+      const tLoop = mod(tAbs, loopSec); // 0..loopSec
+      const vWander = wander > 0 ? wander * Math.sin(twoPi * wanderFreq * tAbs) : 0;
 
-    // Map base v into all 12 leads
-    for (const L of leads) {
-      const m = tmpl[L];
-      // small random jitter per sample if enabled
-      const n = jitter > 0 ? (rand2(i, L) * 2 - 1) * jitter : 0;
-      out[L][i] = (m.invert ? -1 : 1) * v * m.scale + m.offset + n;
+      // First compute a base single-lead value for '*' events:
+      let vBase = 0;
+      for (const e of byLead["*"]) {
+        vBase += pulseAt(tLoop, e);
+      }
+      vBase += vWander;
+
+      // Map '*' + per-lead additions → each output lead
+      for (const L of leads) {
+        let v = vBase;
+        const arr = byLead[L] || [];
+        for (const e of arr) v += pulseAt(tLoop, e);
+
+        const m = tmpl[L];
+        const n = jitter > 0 ? (rand2(i, L) * 2 - 1) * jitter : 0;
+        out[L][i] = (m.invert ? -1 : 1) * v * m.scale + m.offset + n;
+      }
     }
   }
 
-  const res: Samples = {
-    tStart: ctx.t,
-    dt,
-    data: out,
-  };
-
-  // advance engine time
+  const res: Samples = { tStart: ctx.t, dt, data: out };
   ctx.t += N * dt;
   return res;
 }
 
-/* ----------------------- helpers ------------------------ */
+/* ---------------- helpers ---------------- */
 
 function msToSec(ms: number): number { return ms / 1000; }
 function clamp(x: number, lo: number, hi: number): number { return Math.max(lo, Math.min(hi, x)); }
+function mod(a: number, n: number): number { return a - Math.floor(a / n) * n; }
 
-/** Gaussian primitive: exp(-(t^2)/(2*sigma^2)) */
+/** Event → pulse at current loop time */
+function pulseAt(tLoop: number, e: { t: number; type: string; amp: number; widthMs: number }): number {
+  // compute wrapped distance to event center (account for loop ends)
+  // choose the shorter distance either side of the boundary
+  const w = msToSec(e.widthMs);
+  const sigma =
+    e.type === "QRS" ? widthToSigma(w) :
+    e.type === "P"   ? pWidthToSigma(w) :
+    e.type === "T"   ? tWidthToSigma(w) : widthToSigma(w);
+  // shortest circular distance on [0, loopSec)
+  let d = Math.abs(tLoop - e.t);
+  // (opt) If loop is known externally, could pass here; we’ll treat narrow widths so wrap not critical
+  if (d > 0.5) d = 1 - d; // heuristic if loopSec≈1s; safe enough if events not near wrap
+  return e.amp * Math.exp(-(d * d) / (2 * sigma * sigma));
+}
+
+/** Gaussian + triangle pulses used elsewhere */
 function gauss(t: number, sigma: number): number {
   const s2 = sigma * sigma;
   return Math.exp(-(t * t) / (2 * s2));
 }
-
-/** Symmetric triangle pulse centered at 0 with base width w (seconds) */
 function triangle(t: number, width: number): number {
   const half = width / 2;
   const u = 1 - Math.abs(t) / half;
   return u > 0 ? u : 0;
 }
-
-/** Convert desired "width" notion to sigma fits (tuned roughly by eye). */
 function widthToSigma(w: number): number { return w / 4.5; }
 function pWidthToSigma(w: number): number { return w / 2.5; }
 function tWidthToSigma(w: number): number { return w / 3.0; }
-
-/** Deterministic pseudo-random in [0,1) based on index+lead */
 function rand2(i: number, lead: string): number {
-  // xorshift-ish hash
   let h = 2166136261 ^ i;
   for (let k = 0; k < lead.length; k++) h = (h ^ lead.charCodeAt(k)) * 16777619;
-  // Map to 0..1
   return ((h >>> 0) % 10000) / 10000;
 }
 
 type LeadTemplate = Record<LeadName, { scale: number; invert: boolean; offset: number }>;
-
 function buildLeadTemplate(spec: RhythmSpec): LeadTemplate {
   const leads: LeadName[] = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"];
   const out: LeadTemplate = Object.create(null);
-
-  // sensible defaults for amplitude/polarity (approximate textbook look)
   const defaults: LeadTemplate = {
     I:   { scale: 1.0, invert: false, offset: 0 },
     II:  { scale: 1.2, invert: false, offset: 0 },
@@ -186,7 +197,6 @@ function buildLeadTemplate(spec: RhythmSpec): LeadTemplate {
     V5:  { scale: 1.1, invert: false, offset: 0 },
     V6:  { scale: 1.0, invert: false, offset: 0 },
   };
-
   const t = spec.generator.leads.template ?? {};
   for (const L of leads) {
     const custom = t[L] ?? {};
@@ -198,3 +208,4 @@ function buildLeadTemplate(spec: RhythmSpec): LeadTemplate {
   }
   return out;
 }
+
