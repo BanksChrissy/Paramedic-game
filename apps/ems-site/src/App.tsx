@@ -1,19 +1,11 @@
-import React from 'react';
+import { ECGPlot } from "@paramedic/renderer-uplot";
+import nsr from "@paramedic/casepacks/base-pack/rhythms/nsr_80.json";
 
-/**
- * The top level component for the EMS site.  At this early stage it simply
- * renders a placeholder message.  In future development this will be
- * replaced with the full rhythm trainer layout and routing.
- */
-export function App(): JSX.Element {
+export default function App() {
   return (
-    <main style={{ padding: '1rem', fontFamily: 'sans-serif' }}>
-      <h1>Paramedic Rhythm Trainer</h1>
-      <p>
-        This is a placeholder for the desktop‑first EMS learning portal. The
-        real‑time rhythm trainer and associated components will be mounted
-        here in future phases.
-      </p>
-    </main>
+    <div style={{ background: "black", color: "white", padding: 16 }}>
+      <h2>ECG Renderer Demo — NSR 80</h2>
+      <ECGPlot rhythm={nsr as any} seconds={6} />
+    </div>
   );
 }
