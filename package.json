@@ -7,7 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "vitest run"
+   "dev": "vite",
+   "test": "vitest run"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
