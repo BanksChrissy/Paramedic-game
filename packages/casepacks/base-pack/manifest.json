@@ -1,0 +1,15 @@
+{
+  "schema": "com.mama.casepack/1",
+  "id": "base-pack",
+  "title": "Base Rhythm Pack",
+  "version": "0.1.0",
+  "rhythms": [
+    "nsr_80.json"
+  ],
+  "actions": "actions/default_actions.json",
+  "credits": [
+    "Draft content for demonstration purposes only",
+    "Curated by Mama"
+  ],
+  "disclaimer": "For educational simulation only. Not for clinical decision-making."
+}

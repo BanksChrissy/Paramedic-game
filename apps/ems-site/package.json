@@ -1,0 +1,11 @@
+{
+  "name": "@paramedic/ems-site",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'Development server not yet configured'",
+    "build": "echo 'Build not yet configured'"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

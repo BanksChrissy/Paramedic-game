@@ -1,0 +1,8 @@
+{
+  "No_Shock_Asystole": "No shock for true asystole",
+  "Vagal_or_Adenosine": "Vagal maneuvers → Adenosine",
+  "Sync_Cardiovert": "Synchronized cardioversion",
+  "Defibrillate": "Defibrillation (unsynchronized)",
+  "TCP_or_Atropine_then_Pressors": "Transcutaneous pacing; consider atropine/pressors",
+  "CPR": "High-quality CPR"
+}

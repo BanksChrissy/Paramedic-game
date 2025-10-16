@@ -1,0 +1,10 @@
+{
+  "name": "@paramedic/ui-kit",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.js",
+  "dependencies": {
+    "react": "^18.0.0"
+  }
+}

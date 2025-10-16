@@ -1,0 +1,10 @@
+{
+  "name": "@paramedic/engine-ecg",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.js",
+  "dependencies": {
+    "@paramedic/shared": "0.1.0"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@paramedic/shared",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "dependencies": {
+    "zod": "^3.23.8",
+    "mitt": "^3.0.1"
+  }
+}

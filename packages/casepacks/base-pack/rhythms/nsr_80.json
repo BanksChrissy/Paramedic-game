@@ -1,0 +1,36 @@
+{
+  "schema": "com.mama.rhythm/1",
+  "id": "nsr_80",
+  "title": "Normal Sinus Rhythm (80 bpm)",
+  "mode": "parametric",
+  "paperSpeed": 25,
+  "gain": 10,
+  "display": { "layout": "12", "defaultLead": "II" },
+  "quiz": {
+    "rate": "60-100",
+    "regularity": "Regular",
+    "p": "Present before each QRS",
+    "pr": "Normal (0.12–0.20)",
+    "qrs": "Narrow (<0.12)",
+    "name": "NSR",
+    "action": "No_Shock_Asystole"
+  },
+  "generator": {
+    "sampleRateHz": 240,
+    "durationSec": 10,
+    "noise": { "baselineJitter": 0.02, "wander": 0.0 },
+    "parametric": {
+      "bpm": 80,
+      "pWave": { "present": true, "amp": 0.2, "widthMs": 90 },
+      "qrs": { "widthMs": 80, "amp": 2.0, "shape": "triangle" },
+      "tWave": { "amp": 0.8, "widthMs": 150 }
+    },
+    "leads": { "derivation": "template12" }
+  },
+  "interventions": {
+    "syncCardioversion": { "enabled": false },
+    "defibrillation": { "enabled": false },
+    "pacing": { "enabled": false },
+    "medications": []
+  }
+}
